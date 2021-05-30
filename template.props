@@ -1,0 +1,10 @@
+#!/bin/bash
+# This is a template properties file, that can be added to the folders
+# with the ISO files. The property file needs to have the same name
+# as the ISO file subject to be converted (except the .iso extension)
+
+# Specify the title (or titles) that should be encoded
+#SRC_TITLES=0
+
+# If needed, specify additional command line arguments for HandBrake-CLI
+#SRC_ARGS=
