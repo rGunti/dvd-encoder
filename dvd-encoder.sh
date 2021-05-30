@@ -1,0 +1,300 @@
+#!/bin/bash
+
+# Parameters
+# # Env
+HANDBRAKE_CLI=${HANDBRAKE_CLI:=/usr/bin/HandBrakeCLI}
+# # CLI arg
+source=.
+destination=.
+is_force=0
+is_fake=0
+is_test=0
+show_help=0
+
+# ### Provided stuff ###
+# Colors
+L_RED='\033[1;31m'
+L_GREEN='\033[1;32m'
+L_ORANGE='\033[0;33m'
+L_BLUE='\033[1;34m'
+L_CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# ###
+function hello() {
+	echo -e "${L_GREEN}"
+	cat << EOF
+ #####################################
+ #       gunti.net DVD ENCODER       #
+ #                                   #
+ #         (c) 2021, rGunti          #
+ #####################################
+EOF
+	echo -e "${NC}"
+}
+function help() {
+    echo -e "USAGE: ./${WHITE}dvd-encoder [OPTIONS]${NC}\n"
+    cat <<EOF
+dvd-encoder encodes DVD files using HandBrake-CLI.
+The script expects to be working on a directory with ISO files as a source.
+EOF
+
+    echo -e "\n${L_BLUE}OPTIONS${NC}"
+    echo -e "  ${L_GREEN}-h${NC}"
+    echo "  Show this help text"
+    echo -e "  ${L_GREEN}-s <Path>${NC}"
+    echo "  Set the source directory; will use working directory if not specified"
+    echo -e "  ${L_GREEN}-d <Path>${NC}"
+    echo "  Set the output directory; will use working directory if not specified"
+    echo -e "  ${L_GREEN}-F${NC}"
+    echo "  If a file already exists, regenerate it instead of skipping it"
+    echo -e "  ${L_GREEN}-f${NC}"
+    echo "  Enable FAKE mode; doesn't execute but lists all planned operations"
+    echo -e "  ${L_GREEN}-t${NC}"
+    echo "  Enable TEST mode; encodes the first few minutes of the movie"
+
+    echo -e "\n${L_BLUE}ENVIRONMENT VARIABLES${NC}"
+    echo -e "  ${L_GREEN}HANDBRAKE_CLI${NC}"
+    echo "  Configures the installation path of HandBrake-CLI executable."
+    echo -e "  Currently set to: ${WHITE}${HANDBRAKE_CLI}${NC}"
+}
+
+function log() {
+	echo -e "${L_GREEN} # ${WHITE}${1}${NC}"
+}
+function query() {
+	echo -e -n "${WHITE} > ${WHITE}${1}${NC}"
+}
+function ask() {
+	while true; do
+		echo -e -n "${WHITE} ? ${WHITE}${1}${NC} [Y/N] "
+		read -n 1 -r yn
+		case $yn in
+			[Yy]*) echo -e "\b${L_GREEN}Yes${NC}"; return 1;;
+			[Nn]*) echo -e "\b${L_RED}No${NC}"; return 2;;
+			*) echo -e "\b${L_RED}Please select Y for \"Yes\" or N for \"No\"${NC}";;
+		esac
+	done
+	return 0
+}
+function warn() {
+	echo -e "${L_ORANGE} # ${WHITE}${1}${NC}"
+}
+function error() {
+	echo -e "${L_RED} # ${WHITE}${1}${NC}"
+}
+function fake() {
+    echo -e "${L_CYAN} i FAKE: ${WHITE}${1}${NC}"
+}
+
+# ### Custom Logic ###
+function prepare() {
+    if [ ! -f "$HANDBRAKE_CLI" ]; then
+        error "HandBrake-CLI could not be found at the configured path: ${L_BLUE}${HANDBRAKE_CLI}"
+        exit 10
+    fi
+    if [ ! -d "$source" ]; then
+        error "Source Directory doesn't exist: ${L_BLUE}${source}"
+        exit 11
+    fi
+    if [ ! -d "$destination" ]; then
+        error "Destination Directory doesn't exist: ${L_BLUE}${destination}"
+        exit 12
+    fi
+}
+
+function get_busyfile() {
+    file_subject=$1
+    subj=$(realpath "$file_subject.BUSY")
+    echo $subj
+}
+
+function check_busyfile() {
+    busy_filepath=$(get_busyfile "$1")
+    if [ -f "$busy_filepath" ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+function put_busyfile() {
+    busy_filepath=$(get_busyfile "$1")
+    echo -e "$(hostname)\nstarted at $(date)" > "${busy_filepath}"
+}
+
+function remove_busyfile() {
+    busy_filepath=$(get_busyfile "$1")
+    rm "${busy_filepath}"
+}
+
+function encode_file() {
+    src_file="$1"
+    dst_file="$2"
+    title="$3"
+    additional_args="$4"
+
+    if [[ $title != 0 ]]; then
+        dst_dir=$(dirname "$dst_file")
+        dst_filename=$(basename "$dst_file" | sed 's/\(.*\)\.\(.*\)/\1/')
+        dst_file_ext=$(basename "$dst_file" | sed 's/\(.*\)\.\(.*\)/\2/')
+        dst_file=$(realpath "${dst_dir}/${dst_filename}.${title}.${dst_file_ext}")
+    fi
+
+    cmd="\"${HANDBRAKE_CLI}\""
+    cmd="$cmd -i \"${src_file}\""
+    cmd="$cmd -o \"${dst_file}\""
+    if [[ $title == 0 ]]; then
+        cmd="$cmd --main-feature"
+    else
+        cmd="$cmd -t ${title}"
+    fi
+    cmd="$cmd -f av_mkv"
+    cmd="$cmd --all-audio"
+    cmd="$cmd -E copy"
+    cmd="$cmd --audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp3,flac"
+    cmd="$cmd --subtitle 1-99"
+    cmd="$cmd --subtitle-burned=none"
+
+    if [[ $is_test == 1 ]]; then
+        cmd="$cmd --start-at duration:0"
+        cmd="$cmd --stop-at duration:300"
+    fi
+
+    if [[ ! -z "$additional_args" ]]; then
+        cmd="$cmd $additional_args"
+    fi
+
+    if [[ $is_fake == 1 ]]; then
+        fake "Using source file: ${L_BLUE}${src_file}"
+        fake "Writing to file:   ${L_BLUE}${dst_file}"
+        fake "Will execute command:"
+        fake "${NC} $ ${L_BLUE}${cmd}"
+    else
+        check_busyfile "${dst_file}"
+        if [[ $? != 0 ]]; then
+            warn "Found busy file, someone else seems to already work on this file: ${src_file} (#${title}) -> ${dst_file}"
+            return 0
+        fi
+
+        if [ -f "${dst_file}" ]; then
+            if [[ $is_force != 1 ]]; then
+                warn "File already exists, skipping it: ${src_file} (#${title}) -> ${dst_file}"
+                return 0
+            else
+                warn "File already exists, will be overwritten: ${src_file} (#${title}) -> ${dst_file}"
+            fi
+        fi
+
+        log "Putting busy file ..."
+        put_busyfile "${dst_file}"
+
+        eval "$cmd"
+        eval_code=$?
+
+        if [[ $eval_code != 0 ]]; then
+            error "Conversion failed for ${src_file} (#${title}) -> ${dst_file}"
+        fi
+
+        log "Removing busy file ..."
+        remove_busyfile "${dst_file}"
+    fi
+}
+
+function encode() {
+    filepath=$1
+    filename=$(basename $filepath)
+    filename_no_ext=$(basename "$filename" | sed 's/\(.*\)\..*/\1/')
+    dst_filepath=$(realpath "${destination}/${filename_no_ext}.mkv")
+
+    log "Found Disc: ${L_BLUE}${filename_no_ext}"
+
+    prop_file="${filename_no_ext}.props"
+    prop_file=$(realpath "${source}/${prop_file}")
+
+    titles=0
+    additional_args=""
+    if [ -f "${prop_file}" ]; then
+        log "Loading properties file: ${L_BLUE}${prop_file}"
+        source "${prop_file}"
+        titles=${SRC_TITLES:=0}
+        additional_args=${SRC_ARGS:=}
+        if [[ "$titles" != 0 ]]; then
+            log "Titles to be converted: ${L_BLUE}${titles}"
+        fi
+        if [[ ! -z "$additional_args" ]]; then
+            log "Provided additional command line arguments: ${L_BLUE}${additional_args}"
+        fi
+    fi
+
+    IFS=',' read -ra titles_arr <<< "$titles"
+
+    for title in "${titles_arr[@]}"
+    do
+        if [[ "$titles" != 0 ]]; then
+            log "Encoding main feature title ..."
+        else
+            log "Encoding title ${title} ..."
+        fi
+        encode_file "${filepath}" "${dst_filepath}" "${title}" "${additional_args}"
+    done
+}
+
+function main() {
+    log "Will be reading from ${L_BLUE}${source}"
+    log "Will be outputing to ${L_BLUE}${destination}"
+
+    if [[ $is_fake == 1 ]]; then
+        fake "FAKE mode enabled"
+    elif [[ $is_test == 1 ]]; then
+        warn "Enabled TEST mode, will only encode the first 3 minutes"
+    fi
+
+    # List all files
+    for file in "$source"/*.iso
+    do
+        encode "$file"
+    done
+}
+
+# Parse Arguments
+while getopts "s:d:Fhft" arg; do
+    case "${arg}" in
+        h)
+            show_help=1
+            ;;
+        s)
+            source=$(realpath ${OPTARG})
+            ;;
+        d)
+            destination=$(realpath ${OPTARG})
+            ;;
+        F)
+            is_force=1
+            ;;
+        f)
+            is_fake=1
+            ;;
+        t)
+            is_test=1
+            ;;
+        :)
+            error "ERROR: -${OPTARG} requires an argument"
+            ;;
+        *)
+            error "ERROR: -${OPTARG} is not a valid argument"
+            exit 1
+            ;;
+    esac
+done
+
+# ### main() ###
+hello
+if [[ $show_help == 1 ]]; then
+    help
+    exit 0
+fi
+
+prepare
+main
