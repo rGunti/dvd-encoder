@@ -213,13 +213,21 @@ function encode() {
     prop_file="${filename_no_ext}.props"
     prop_file=$(realpath "${source}/${prop_file}")
 
+    do_ignore=0
     titles=0
     additional_args=""
     if [ -f "${prop_file}" ]; then
         log "Loading properties file: ${L_BLUE}${prop_file}"
         source "${prop_file}"
+
+        do_ignore=${SRC_IGNORE:=0}
         titles=${SRC_TITLES:=0}
         additional_args=${SRC_ARGS:=}
+
+        if [[ "$do_ignore" == "1" ]]; then
+            warn "File ignored by properties file (SRC_IGNORE=1)"
+            return
+        fi
         if [[ "$titles" != 0 ]]; then
             log "Titles to be converted: ${L_BLUE}${titles}"
         fi

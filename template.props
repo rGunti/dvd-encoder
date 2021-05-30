@@ -8,3 +8,6 @@
 
 # If needed, specify additional command line arguments for HandBrake-CLI
 #SRC_ARGS=
+
+# To ignore the ISO file, enable this line
+#SRC_IGNORE=1
