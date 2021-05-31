@@ -9,6 +9,7 @@ destination=.
 is_force=0
 is_fake=0
 is_test=0
+is_dirmode=0
 show_help=0
 
 # ### Provided stuff ###
@@ -47,6 +48,8 @@ EOF
     echo "  Set the source directory; will use working directory if not specified"
     echo -e "  ${L_GREEN}-d <Path>${NC}"
     echo "  Set the output directory; will use working directory if not specified"
+    echo -e "  ${L_GREEN}-D${NC}"
+    echo "  Scan for directories instead of ISOs"
     echo -e "  ${L_GREEN}-F${NC}"
     echo "  If a file already exists, regenerate it instead of skipping it"
     echo -e "  ${L_GREEN}-f${NC}"
@@ -259,15 +262,22 @@ function main() {
         warn "Enabled TEST mode, will only encode the first 3 minutes"
     fi
 
-    # List all files
-    for file in "$source"/*.iso
-    do
-        encode "$file"
-    done
+    if [[ $is_dirmode == 1 ]]; then
+        log "Scanning for directories instead of ISOs"
+        for file in "${source}"/*
+        do
+            encode "$file"
+        done
+    else
+        for file in "${source}"/*.iso
+        do
+            encode "$file"
+        done
+    fi
 }
 
 # Parse Arguments
-while getopts "s:d:Fhft" arg; do
+while getopts "s:d:FhftD" arg; do
     case "${arg}" in
         h)
             show_help=1
@@ -277,6 +287,9 @@ while getopts "s:d:Fhft" arg; do
             ;;
         d)
             destination=$(realpath ${OPTARG})
+            ;;
+        D)
+            is_dirmode=1
             ;;
         F)
             is_force=1
